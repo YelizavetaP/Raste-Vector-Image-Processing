@@ -25,3 +25,11 @@ python main.py
 - `main.py` - pipeline: load -> color correction -> vectorize -> count
 - `media/` - input images
 - `outputs/` - generated edge maps, contour overlays, comparison plots
+
+
+
+## Materials
+Sobel
+https://www.youtube.com/watch?v=uihBwtPIBxM&t=440s
+Canny
+https://www.youtube.com/watch?v=sRFM5IEqR2w

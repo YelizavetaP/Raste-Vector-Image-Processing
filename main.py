@@ -27,7 +27,9 @@ OUTPUTS = ROOT / "outputs"
 OUTPUTS.mkdir(exist_ok=True)
 
 BING_PATH = MEDIA / "bing.png"
-LANDSAT_PATH = MEDIA / "landsat.png"
+# LANDSAT_PATH = MEDIA / "landsat.png"
+LANDSAT_PATH = MEDIA / "ls_2pm.png"
+
 
 
 # --------------------------------------------------------------------------- #
@@ -38,17 +40,18 @@ LANDSAT_PATH = MEDIA / "landsat.png"
 # --------------------------------------------------------------------------- #
 PARAMS_BING = {
     "stages": [
+        ("kmeans",          {"K": 3}),
         ("to_gray",         {}),
         ("equalize",        {}),
         # ("negative",        {}),
 
-        ("gaussian_blur",   {"ksize": 13}),
-        ("canny",           {"low": 10, "high": 150}),
-        ("morph_close",     {"shape": "rect", "ksize": 7, "iters": 2}),
+        ("gaussian_blur",   {"ksize": 15}),
+        ("canny",           {"low": 50, "high": 160}),
+        ("morph_close",     {"shape": "rect", "ksize": 8, "iters": 2}),
         ("negative",        {}),
 
-        ("find_rectangles", {"approx_eps": 0.04, "min_area": 10, "max_area": 100000,
-                             "min_vertices": 4, "max_vertices": 20}),
+        ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 3000,
+                             "min_vertices": 4, "max_vertices": 4}),
     ],
 }
 
@@ -56,11 +59,13 @@ PARAMS_LANDSAT = {
     "stages": [
         ("to_gray",         {}),
         ("equalize",        {}),
-        # ("gaussian_blur",   {"ksize": 5}),
-        ("canny",           {"low": 30, "high": 120}),
-        ("morph_close",     {"shape": "rect", "ksize": 3, "iters": 1}),
-        ("find_rectangles", {"approx_eps": 0.02, "min_area": 20, "max_area": 200,
-                             "min_vertices": 20, "max_vertices": 200}),
+        ("gaussian_blur",   {"ksize": 5}),
+        ("canny",           {"low": 10, "high": 30}),
+        ("morph_close",     {"shape": "rect", "ksize": 7, "iters": 2}),
+        ("negative",        {}),
+
+        ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 10000,
+                             "min_vertices": 4, "max_vertices": 4}),
     ],
 }
  
@@ -246,7 +251,7 @@ def main():
 
     show_pipeline_grid(snaps_b, snaps_l, ctx_b["count"], ctx_l["count"],
                        "Bing (reference)", "Landsat (tuned)")
-    # show_contours_side_by_side(ctx_b, ctx_l)
+    show_contours_side_by_side(ctx_b, ctx_l)
 
     print(f"\nBing reference: {ctx_b['count']} buildings")
     print(f"Landsat:        {ctx_l['count']} buildings")
@@ -255,3 +260,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+# Notes
+# Canny low high, tested with both values same to see what gets regected and accepted
+# Morph needed negative
+# 
