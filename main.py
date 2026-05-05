@@ -179,6 +179,17 @@ def run_pipeline(img_bgr, params):
 # --------------------------------------------------------------------------- #
 # Visualisations.                                                             #
 # --------------------------------------------------------------------------- #
+def save_stage_snapshots(snaps, prefix):
+    """Write every pipeline snapshot to outputs/stages/ as a PNG."""
+    out_dir = OUTPUTS / "stages"
+    out_dir.mkdir(exist_ok=True)
+    rgb_stages = {"original", "find_rectangles"}  # stored as RGB; flip to BGR
+    for i, (name, img, _) in enumerate(snaps):
+        out = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) \
+              if (img.ndim == 3 and name in rgb_stages) else img
+        cv2.imwrite(str(out_dir / f"{prefix}_{i:02d}_{name}.png"), out)
+
+
 def show_originals(bing, landsat):
     fig, ax = plt.subplots(1, 2, figsize=(14, 6))
     ax[0].imshow(cv2.cvtColor(bing, cv2.COLOR_BGR2RGB))
@@ -247,6 +258,9 @@ def main():
     snaps_b, ctx_b = run_pipeline(bing, PARAMS_BING)
     snaps_l, ctx_l = run_pipeline(landsat, PARAMS_LANDSAT)
 
+    save_stage_snapshots(snaps_b, "bing")
+    save_stage_snapshots(snaps_l, "landsat")
+
     show_pipeline_grid(snaps_b, snaps_l, ctx_b["count"], ctx_l["count"],
                        "Bing (reference)", "Landsat (tuned)")
     show_contours_side_by_side(ctx_b, ctx_l)
@@ -262,6 +276,9 @@ if __name__ == "__main__":
 
 
 # Notes - results & conclusions
+#
+# Generated plots and full write-up: see README.md and the outputs/ folder
+# (01_originals.png, 02_pipeline.png, 03_contours.png).
 #
 # General observations:
 # - Canny low/high: tested with same values to see what gets rejected/accepted.
