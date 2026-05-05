@@ -1,18 +1,12 @@
 """HW1 Level 3 - Raster & Vector Image Processing.
 
+Done by Popova Yelyzaveta.
+
 Count buildings on the KPI main campus from two sources, compare counts, and
 manually tune Landsat preprocessing so its count approaches the Bing reference.
   - media/bing.png    -> Bing Maps (high-res, reference)
   - media/landsat.png -> Landsat   (low-res, tuning target)
 
-Methods are restricted to those used in SSWU-CV/module_1:
-  cv2.cvtColor, cv2.GaussianBlur, cv2.Canny,
-  cv2.morphologyEx, cv2.getStructuringElement,
-  cv2.findContours, cv2.arcLength, cv2.approxPolyDP, cv2.drawContours
-                                       Lesson 2 / image_recognition.py
-  cv2.equalizeHist                     Lesson 1 / Im_quality enhanc.py
-  cv2.kmeans                           Lesson 1 / Im_klastering.py
-  cv2.threshold (manual / OTSU)        Lesson 1 / im_segment.py
 """
 
 from pathlib import Path
@@ -27,8 +21,10 @@ OUTPUTS = ROOT / "outputs"
 OUTPUTS.mkdir(exist_ok=True)
 
 BING_PATH = MEDIA / "bing.png"
-# LANDSAT_PATH = MEDIA / "landsat.png"
-LANDSAT_PATH = MEDIA / "ls_2pm.png"
+LANDSAT_PATH = MEDIA / "landsat.png"
+
+# LANDSAT_PATH = MEDIA / "ls2.png"
+# LANDSAT_PATH = MEDIA / "ls_2pm.png"
 
 
 
@@ -43,13 +39,10 @@ PARAMS_BING = {
         ("kmeans",          {"K": 3}),
         ("to_gray",         {}),
         ("equalize",        {}),
-        # ("negative",        {}),
-
         ("gaussian_blur",   {"ksize": 15}),
         ("canny",           {"low": 50, "high": 160}),
-        ("morph_close",     {"shape": "rect", "ksize": 8, "iters": 2}),
+        ("morphology",      {"op": "close", "gradient": "rect", "ksize": 8, "iters": 2}),
         ("negative",        {}),
-
         ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 3000,
                              "min_vertices": 4, "max_vertices": 4}),
     ],
@@ -57,14 +50,14 @@ PARAMS_BING = {
 
 PARAMS_LANDSAT = {
     "stages": [
+        ("kmeans",          {"K": 9}),
         ("to_gray",         {}),
         ("equalize",        {}),
-        ("gaussian_blur",   {"ksize": 5}),
-        ("canny",           {"low": 10, "high": 30}),
-        ("morph_close",     {"shape": "rect", "ksize": 7, "iters": 2}),
+        # ("gaussian_blur",   {"ksize": 5}),
+        ("canny",           {"low": 150, "high": 200}),
+        ("morphology",      {"op": "close", "shape": "rect", "ksize": 8, "iters": 2}),
         ("negative",        {}),
-
-        ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 10000,
+        ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 3000,
                              "min_vertices": 4, "max_vertices": 4}),
     ],
 }
@@ -116,14 +109,19 @@ def s_canny(img, p, ctx):
     return cv2.Canny(img, p.get("low", 10), p.get("high", 250)), ctx
 
 
-def s_morph_close(img, p, ctx):
-    shape_map = {"rect": cv2.MORPH_RECT,
+def s_morphology(img, p, ctx):
+    shape_map = {"rect":    cv2.MORPH_RECT,
                  "ellipse": cv2.MORPH_ELLIPSE,
-                 "cross": cv2.MORPH_CROSS}
+                 "cross":   cv2.MORPH_CROSS}
+    op_map = {"close":    cv2.MORPH_CLOSE,
+              "open":     cv2.MORPH_OPEN,
+              "gradient": cv2.MORPH_GRADIENT,
+              "tophat":   cv2.MORPH_TOPHAT,
+              "blackhat": cv2.MORPH_BLACKHAT}
     shape = shape_map[p.get("shape", "rect")]
+    op = op_map[p.get("op", "close")]
     k = cv2.getStructuringElement(shape, (p.get("ksize", 7), p.get("ksize", 7)))
-    return cv2.morphologyEx(img, cv2.MORPH_CLOSE, k,
-                            iterations=p.get("iters", 1)), ctx
+    return cv2.morphologyEx(img, op, k, iterations=p.get("iters", 1)), ctx
 
 
 def s_find_rectangles(img, p, ctx):
@@ -157,7 +155,7 @@ STAGES = {
     "kmeans":          s_kmeans,
     "threshold":       s_threshold,
     "canny":           s_canny,
-    "morph_close":     s_morph_close,
+    "morphology":      s_morphology,
     "find_rectangles": s_find_rectangles,
 }
 
@@ -168,13 +166,13 @@ STAGES = {
 def run_pipeline(img_bgr, params):
     ctx = {"original_bgr": img_bgr.copy(), "count": 0,
            "matches": [], "rect_overlay": img_bgr.copy()}
-    snapshots = [("original", cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))]
+    snapshots = [("original", cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), {})]
     img = img_bgr
     for name, p in params["stages"]:
         if name not in STAGES:
             raise KeyError(f"unknown stage: {name}. valid: {list(STAGES)}")
         img, ctx = STAGES[name](img, p, ctx)
-        snapshots.append((name, img))
+        snapshots.append((name, img, p))
     return snapshots, ctx
 
 
@@ -208,7 +206,7 @@ def show_pipeline_grid(snaps_top, snaps_bot, count_top, count_bot,
         for j in range(cols):
             a = ax[row, j]
             if j < len(snaps):
-                name, img = snaps[j]
+                name, img, _ = snaps[j]
                 a.imshow(img, cmap=None if img.ndim == 3 else "gray")
                 a.set_title(name, fontsize=10)
             else:
@@ -244,7 +242,7 @@ def main():
     if bing is None:    raise FileNotFoundError(BING_PATH)
     if landsat is None: raise FileNotFoundError(LANDSAT_PATH)
 
-    # show_originals(bing, landsat)
+    show_originals(bing, landsat)
 
     snaps_b, ctx_b = run_pipeline(bing, PARAMS_BING)
     snaps_l, ctx_l = run_pipeline(landsat, PARAMS_LANDSAT)
@@ -263,7 +261,55 @@ if __name__ == "__main__":
 
 
 
-# Notes
-# Canny low high, tested with both values same to see what gets regected and accepted
-# Morph needed negative
-# 
+# Notes - results & conclusions
+#
+# General observations:
+# - Canny low/high: tested with same values to see what gets rejected/accepted.
+
+# - With Canny alone the contours came out as "double outlines" - two parallel
+#   lines on each side of every real edge (one for the building edge, one for
+#   its shadow). findContours then traced both as separate contours, so what
+#   looked like a building was really a thin frame around it. morphology(close)
+#   merges those parallel lines into a single thick band, which fixes it.
+
+# - morphology(close) on Canny output produces white texture-soup with building-
+#   shaped holes -> need negative right after to flip into white blobs that
+#   findContours can detect.
+
+# - kmeans BEFORE to_gray separates colors that would otherwise collapse to
+#   the same grayscale value:
+#     * On Bing it reduced trees / sport fields being mis-identified as roofs
+#       (green vs gray were getting flattened to the same brightness).
+#     * On Landsat it sharpened the boundaries of blurry blobs - by snapping
+#       each pixel to one of K dominant colors, fuzzy gradients became flat
+#       regions with crisp edges, so objects look more defined and texture
+#       noise inside them disappears.
+
+# - Strict 4-vertex filter from the lesson works once approx_eps is loosened to
+#   ~0.08 (heavy polygon simplification collapses curvy roofs to 4 corners).
+#
+# --- Bing (high-res reference) ---
+# Final stages:
+#   kmeans (K=3)        
+#   to_gray
+#   equalize            stretches contrast so Canny gradients are stronger
+#   gaussian_blur (15)  
+#   canny (50, 160)     
+#   morphology close    rect ksize=8 iters=2 
+#   negative            flip "frame around hole" -> "filled blob"
+#   find_rectangles     eps=0.08, area 400-3000, exactly 4 vertices
+# Conclusion: not all buildings detected and some false positives remain,
+# but a clear subset of real buildings is recognised. 
+
+# --- Landsat (low-res tuning target) ---
+# Final stages:
+#   kmeans (K=9)        
+#   to_gray
+#   equalize            critical here - input contrast is very poor
+#   (no gaussian_blur)  image is already blurry, extra blur kills weak edges
+#   canny (150, 200)    high thresholds because equalize amplified everything
+#   morphology close    same as Bing
+#   negative            same polarity flip
+#   find_rectangles     same filter as Bing
+# Conclusion: count is approximate; landsat resolution loses small buildings
+# entirely. Same find_rectangles params used as Bing
