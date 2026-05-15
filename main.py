@@ -1,4 +1,4 @@
-"""HW1 Level 3 - Raster & Vector Image Processing.
+"""Entry point for both HW1 and HW2.
 
 Done by Popova Yelyzaveta.
 
@@ -7,18 +7,28 @@ manually tune Landsat preprocessing so its count approaches the Bing reference.
   - media/bing.png    -> Bing Maps (high-res, reference)
   - media/landsat.png -> Landsat   (low-res, tuning target)
 
+To switch tasks: edit the three lines inside `main()` to point at the HW1 or
+HW2 params/save_dir. Set the corresponding SAVE_DIR_* to `None` for no save,
+or to a directory path to write all artifacts there.
 """
 
 from pathlib import Path
 
 import cv2
-import numpy as np
-import matplotlib.pyplot as plt
+
+from pipeline import STAGES, run_pipeline, save_stage_snapshots
+from stages_m1 import M1_STAGES
+from stages_m2 import M2_STAGES
+from viz import show_originals, show_pipeline_grid, show_contours_side_by_side
+
+# Make every stage from both modules available to the pipeline
+STAGES.update(M1_STAGES)
+STAGES.update(M2_STAGES)
+
 
 ROOT = Path(__file__).parent
 MEDIA = ROOT / "media"
 OUTPUTS = ROOT / "outputs"
-OUTPUTS.mkdir(exist_ok=True)
 
 BING_PATH = MEDIA / "bing.png"
 LANDSAT_PATH = MEDIA / "landsat.png"
@@ -27,33 +37,36 @@ LANDSAT_PATH = MEDIA / "landsat.png"
 # LANDSAT_PATH = MEDIA / "ls_2pm.png"
 
 
+# --------------------------------------------------------------------------- #
+# Save directories — None = don't save anything for that task.                #
+# Set to a Path to write all of that task's artifacts under that directory.   #
+# --------------------------------------------------------------------------- #
+SAVE_DIR_HW1 = 'outputs/hw1'   # e.g. OUTPUTS / "hw1"
+SAVE_DIR_HW2 = 'outputs/hw2'    # e.g. OUTPUTS / "hw2"
+
 
 # --------------------------------------------------------------------------- #
-# Per-image pipeline definitions.                                             #
-# Each entry is (stage_name, stage_params). The runner walks the list in      #
-# order, so to add/remove a stage for one image just edit its list.           #
-# Available stage names: see STAGES dict below.                               #
+# HW1 — raster & vector basics (color correction + Canny + contours).        #
 # --------------------------------------------------------------------------- #
-PARAMS_BING = {
+PARAMS_BING_HW1 = {
     "stages": [
         ("kmeans",          {"K": 3}),
         ("to_gray",         {}),
         ("equalize",        {}),
         ("gaussian_blur",   {"ksize": 15}),
         ("canny",           {"low": 50, "high": 160}),
-        ("morphology",      {"op": "close", "gradient": "rect", "ksize": 8, "iters": 2}),
+        ("morphology",      {"op": "close", "shape": "rect", "ksize": 8, "iters": 2}),
         ("negative",        {}),
         ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 3000,
                              "min_vertices": 4, "max_vertices": 4}),
     ],
 }
 
-PARAMS_LANDSAT = {
+PARAMS_LANDSAT_HW1 = {
     "stages": [
         ("kmeans",          {"K": 9}),
         ("to_gray",         {}),
         ("equalize",        {}),
-        # ("gaussian_blur",   {"ksize": 5}),
         ("canny",           {"low": 150, "high": 200}),
         ("morphology",      {"op": "close", "shape": "rect", "ksize": 8, "iters": 2}),
         ("negative",        {}),
@@ -61,187 +74,42 @@ PARAMS_LANDSAT = {
                              "min_vertices": 4, "max_vertices": 4}),
     ],
 }
- 
+
 
 # --------------------------------------------------------------------------- #
-# Stage functions. Signature: (img, params, ctx) -> (img_out, ctx_out)        #
-#   ctx carries shared state: original_bgr, count, matches, rect_overlay.     #
+# HW2 — adds filtering + brightness/contrast correction stages from M2.      #
+# Starting point is the latest CANDIDATE_* from task2.ipynb; tune further    #
+# in the notebook then paste the winner back here.                            #
 # --------------------------------------------------------------------------- #
-def s_to_gray(img, p, ctx):
-    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), ctx
-
-
-def s_equalize(img, p, ctx):
-    return cv2.equalizeHist(img), ctx
-
-
-def s_negative(img, p, ctx):
-    return cv2.bitwise_not(img), ctx
-
-
-def s_gaussian_blur(img, p, ctx):
-    k = p.get("ksize", 3)
-    return cv2.GaussianBlur(img, (k, k), p.get("sigma", 0)), ctx
-
-
-def s_kmeans(img, p, ctx):
-    K = p.get("K", 4)
-    rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB) if img.ndim == 3 \
-          else cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-    Z = rgb.reshape((-1, 3)).astype(np.float32)
-    crit = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 10, 1.0)
-    _, lbl, c = cv2.kmeans(Z, K, None, crit, 10, cv2.KMEANS_PP_CENTERS)
-    res = np.uint8(c)[lbl.flatten()].reshape(rgb.shape)
-    return cv2.cvtColor(res, cv2.COLOR_RGB2BGR), ctx
-
-
-def s_threshold(img, p, ctx):
-    flag = cv2.THRESH_BINARY_INV if p.get("invert", True) else cv2.THRESH_BINARY
-    thr = p.get("thr", 127)
-    if p.get("use_otsu", False):
-        flag |= cv2.THRESH_OTSU
-        thr = 0
-    _, b = cv2.threshold(img, thr, 255, flag)
-    return b, ctx
-
-
-def s_canny(img, p, ctx):
-    return cv2.Canny(img, p.get("low", 10), p.get("high", 250)), ctx
-
-
-def s_morphology(img, p, ctx):
-    shape_map = {"rect":    cv2.MORPH_RECT,
-                 "ellipse": cv2.MORPH_ELLIPSE,
-                 "cross":   cv2.MORPH_CROSS}
-    op_map = {"close":    cv2.MORPH_CLOSE,
-              "open":     cv2.MORPH_OPEN,
-              "gradient": cv2.MORPH_GRADIENT,
-              "tophat":   cv2.MORPH_TOPHAT,
-              "blackhat": cv2.MORPH_BLACKHAT}
-    shape = shape_map[p.get("shape", "rect")]
-    op = op_map[p.get("op", "close")]
-    k = cv2.getStructuringElement(shape, (p.get("ksize", 7), p.get("ksize", 7)))
-    return cv2.morphologyEx(img, op, k, iterations=p.get("iters", 1)), ctx
-
-
-def s_find_rectangles(img, p, ctx):
-    """Lesson 2 / image_recognition.py: arcLength + approxPolyDP, count N-gons."""
-    cnts, _ = cv2.findContours(img.copy(), cv2.RETR_EXTERNAL,
-                               cv2.CHAIN_APPROX_SIMPLE)
-    overlay = ctx["original_bgr"].copy()
-    eps = p.get("approx_eps", 0.02)
-    min_v, max_v = p.get("min_vertices", 4), p.get("max_vertices", 4)
-    min_a, max_a = p.get("min_area", 0), p.get("max_area", 1e12)
-    matches = []
-    for c in cnts:
-        a = cv2.contourArea(c)
-        if not (min_a <= a <= max_a):
-            continue
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, eps * peri, True)
-        if min_v <= len(approx) <= max_v:
-            cv2.drawContours(overlay, [approx], -1, (0, 255, 0), 2)
-            matches.append(approx)
-    ctx = {**ctx, "count": len(matches), "matches": matches,
-           "rect_overlay": overlay}
-    return cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB), ctx
-
-
-STAGES = {
-    "to_gray":         s_to_gray,
-    "equalize":        s_equalize,
-    "negative":        s_negative,
-    "gaussian_blur":   s_gaussian_blur,
-    "kmeans":          s_kmeans,
-    "threshold":       s_threshold,
-    "canny":           s_canny,
-    "morphology":      s_morphology,
-    "find_rectangles": s_find_rectangles,
+PARAMS_BING_HW2 = {
+    "stages": [
+        ("kmeans",          {"K": 3}),
+        ("bilateral",       {"d": 9, "sigma_color": 75, "sigma_space": 75}),
+        ("to_gray",         {}),
+        ("equalize",        {}),
+        ("gaussian_blur",   {"ksize": 15}),
+        ("canny",           {"low": 50, "high": 160}),
+        ("morphology",      {"op": "close", "shape": "rect", "ksize": 8, "iters": 2}),
+        ("negative",        {}),
+        ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 3000,
+                             "min_vertices": 4, "max_vertices": 4}),
+    ],
 }
 
-
-# --------------------------------------------------------------------------- #
-# Pipeline runner.                                                            #
-# --------------------------------------------------------------------------- #
-def run_pipeline(img_bgr, params):
-    ctx = {"original_bgr": img_bgr.copy(), "count": 0,
-           "matches": [], "rect_overlay": img_bgr.copy()}
-    snapshots = [("original", cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), {})]
-    img = img_bgr
-    for name, p in params["stages"]:
-        if name not in STAGES:
-            raise KeyError(f"unknown stage: {name}. valid: {list(STAGES)}")
-        img, ctx = STAGES[name](img, p, ctx)
-        snapshots.append((name, img, p))
-    return snapshots, ctx
-
-
-# --------------------------------------------------------------------------- #
-# Visualisations.                                                             #
-# --------------------------------------------------------------------------- #
-def save_stage_snapshots(snaps, prefix):
-    """Write every pipeline snapshot to outputs/stages/ as a PNG."""
-    out_dir = OUTPUTS / "stages"
-    out_dir.mkdir(exist_ok=True)
-    rgb_stages = {"original", "find_rectangles"}  # stored as RGB; flip to BGR
-    for i, (name, img, _) in enumerate(snaps):
-        out = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) \
-              if (img.ndim == 3 and name in rgb_stages) else img
-        cv2.imwrite(str(out_dir / f"{prefix}_{i:02d}_{name}.png"), out)
-
-
-def show_originals(bing, landsat):
-    fig, ax = plt.subplots(1, 2, figsize=(14, 6))
-    ax[0].imshow(cv2.cvtColor(bing, cv2.COLOR_BGR2RGB))
-    ax[0].set_title("Bing Maps - high-res reference")
-    ax[1].imshow(cv2.cvtColor(landsat, cv2.COLOR_BGR2RGB))
-    ax[1].set_title("Landsat - low-res tuning target")
-    for a in ax:
-        a.set_xticks([]); a.set_yticks([])
-    fig.suptitle("Originals: KPI main campus (input images)")
-    fig.tight_layout()
-    fig.savefig(OUTPUTS / "01_originals.png", dpi=120)
-    plt.show()
-
-
-def show_pipeline_grid(snaps_top, snaps_bot, count_top, count_bot,
-                       label_top, label_bot):
-    cols = max(len(snaps_top), len(snaps_bot))
-    fig, ax = plt.subplots(2, cols, figsize=(3.0 * cols, 6.5))
-    if cols == 1:
-        ax = np.array([[ax[0]], [ax[1]]])
-    for row, (snaps, label, count) in enumerate((
-        (snaps_top, label_top, count_top),
-        (snaps_bot, label_bot, count_bot),
-    )):
-        for j in range(cols):
-            a = ax[row, j]
-            if j < len(snaps):
-                name, img, _ = snaps[j]
-                a.imshow(img, cmap=None if img.ndim == 3 else "gray")
-                a.set_title(name, fontsize=10)
-            else:
-                a.axis("off")
-            a.set_xticks([]); a.set_yticks([])
-        ax[row, 0].set_ylabel(f"{label}\ncount = {count}", fontsize=11)
-    fig.suptitle("Pipeline manipulations - top: Bing reference, bottom: Landsat")
-    fig.tight_layout()
-    fig.savefig(OUTPUTS / "02_pipeline.png", dpi=120)
-    plt.show()
-
-
-def show_contours_side_by_side(ctx_b, ctx_l):
-    fig, ax = plt.subplots(1, 2, figsize=(14, 6))
-    ax[0].imshow(cv2.cvtColor(ctx_b["rect_overlay"], cv2.COLOR_BGR2RGB))
-    ax[0].set_title(f"Bing - detected rectangles: {ctx_b['count']}")
-    ax[1].imshow(cv2.cvtColor(ctx_l["rect_overlay"], cv2.COLOR_BGR2RGB))
-    ax[1].set_title(f"Landsat - detected rectangles: {ctx_l['count']}")
-    for a in ax:
-        a.set_xticks([]); a.set_yticks([])
-    fig.suptitle("Vectorized contours (approxPolyDP, 4 vertices) - building candidates")
-    fig.tight_layout()
-    fig.savefig(OUTPUTS / "03_contours.png", dpi=120)
-    plt.show()
+PARAMS_LANDSAT_HW2 = {
+    "stages": [
+        ("kmeans",          {"K": 9}),
+        ("to_gray",         {}),
+        ("pow_transform",   {"gamma": 0.7}),
+        ("hist_stretch",    {"low_pct": 2, "high_pct": 98}),
+        ("median_blur",     {"ksize": 3}),
+        ("canny",           {"low": 150, "high": 200}),
+        ("morphology",      {"op": "close", "shape": "rect", "ksize": 8, "iters": 2}),
+        ("negative",        {}),
+        ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 3000,
+                             "min_vertices": 4, "max_vertices": 4}),
+    ],
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -253,17 +121,36 @@ def main():
     if bing is None:    raise FileNotFoundError(BING_PATH)
     if landsat is None: raise FileNotFoundError(LANDSAT_PATH)
 
-    show_originals(bing, landsat)
+    # # ===== switch task here =====
+    # params_bing    = PARAMS_BING_HW1     # PARAMS_BING_HW2 to run HW2
+    # params_landsat = PARAMS_LANDSAT_HW1  # PARAMS_LANDSAT_HW2 to run HW2
+    # save_dir       = SAVE_DIR_HW1        # SAVE_DIR_HW2 to run HW2
 
-    snaps_b, ctx_b = run_pipeline(bing, PARAMS_BING)
-    snaps_l, ctx_l = run_pipeline(landsat, PARAMS_LANDSAT)
+    params_bing    = PARAMS_BING_HW2     
+    params_landsat = PARAMS_LANDSAT_HW2  
+    save_dir       = SAVE_DIR_HW2        # SAVE_DIR_HW2 to run HW2
+    # ============================
 
-    save_stage_snapshots(snaps_b, "bing")
-    save_stage_snapshots(snaps_l, "landsat")
+    # accept str or Path; relative paths resolve against the script's own dir
+    save_dir = Path(save_dir) if save_dir else None
+    if save_dir and not save_dir.is_absolute():
+        save_dir = ROOT / save_dir
+
+    show_originals(bing, landsat,
+                   save_path=(save_dir / "01_originals.png") if save_dir else None)
+
+    snaps_b, ctx_b = run_pipeline(bing,    params_bing)
+    snaps_l, ctx_l = run_pipeline(landsat, params_landsat)
+
+    if save_dir:
+        save_stage_snapshots(snaps_b, "bing",    out_dir=save_dir / "stages")
+        save_stage_snapshots(snaps_l, "landsat", out_dir=save_dir / "stages")
 
     show_pipeline_grid(snaps_b, snaps_l, ctx_b["count"], ctx_l["count"],
-                       "Bing (reference)", "Landsat (tuned)")
-    show_contours_side_by_side(ctx_b, ctx_l)
+                       "Bing (reference)", "Landsat (tuned)",
+                       save_path=(save_dir / "02_pipeline.png") if save_dir else None)
+    show_contours_side_by_side(ctx_b, ctx_l,
+                               save_path=(save_dir / "03_contours.png") if save_dir else None)
 
     print(f"\nBing reference: {ctx_b['count']} buildings")
     print(f"Landsat:        {ctx_l['count']} buildings")
@@ -274,11 +161,9 @@ if __name__ == "__main__":
     main()
 
 
-
 # Notes - results & conclusions
 #
 # Generated plots and full write-up: see README.md and the outputs/ folder
-# (01_originals.png, 02_pipeline.png, 03_contours.png).
 #
 # General observations:
 # - Canny low/high: tested with same values to see what gets rejected/accepted.
@@ -305,22 +190,22 @@ if __name__ == "__main__":
 # - Strict 4-vertex filter from the lesson works once approx_eps is loosened to
 #   ~0.08 (heavy polygon simplification collapses curvy roofs to 4 corners).
 #
-# --- Bing (high-res reference) ---
+# --- Bing (HW1 high-res reference) ---
 # Final stages:
-#   kmeans (K=3)        
+#   kmeans (K=3)
 #   to_gray
 #   equalize            stretches contrast so Canny gradients are stronger
-#   gaussian_blur (15)  
-#   canny (50, 160)     
-#   morphology close    rect ksize=8 iters=2 
+#   gaussian_blur (15)
+#   canny (50, 160)
+#   morphology close    rect ksize=8 iters=2
 #   negative            flip "frame around hole" -> "filled blob"
 #   find_rectangles     eps=0.08, area 400-3000, exactly 4 vertices
 # Conclusion: not all buildings detected and some false positives remain,
-# but a clear subset of real buildings is recognised. 
+# but a clear subset of real buildings is recognised.
 
-# --- Landsat (low-res tuning target) ---
+# --- Landsat (HW1 low-res tuning target) ---
 # Final stages:
-#   kmeans (K=9)        
+#   kmeans (K=9)
 #   to_gray
 #   equalize            critical here - input contrast is very poor
 #   (no gaussian_blur)  image is already blurry, extra blur kills weak edges
@@ -329,4 +214,4 @@ if __name__ == "__main__":
 #   negative            same polarity flip
 #   find_rectangles     same filter as Bing
 # Conclusion: count is approximate; landsat resolution loses small buildings
-# entirely. Same find_rectangles params used as Bing
+# entirely. Same find_rectangles params used as Bing.
