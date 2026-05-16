@@ -86,39 +86,61 @@ def show_originals(bing, landsat, save_path=None):
     plt.show()
 
 
-def show_pipeline_grid(snaps_top, snaps_bot, count_top, count_bot,
-                       label_top, label_bot, save_path=None):
-    cols = max(len(snaps_top), len(snaps_bot))
-    fig, ax = plt.subplots(2, cols, figsize=(3.0 * cols, 6.5))
-    if cols == 1:
-        ax = np.array([[ax[0]], [ax[1]]])
-    for row, (snaps, label, count) in enumerate((
+def show_pipeline_grid(snaps_top=None, snaps_bot=None, count_top=None, count_bot=None,
+                       label_top='', label_bot='', save_path=None):
+    """Pipeline snapshot grid. Pass `snaps_top=None` or `snaps_bot=None` to skip that row."""
+    rows = [r for r in [
         (snaps_top, label_top, count_top),
         (snaps_bot, label_bot, count_bot),
-    )):
+    ] if r[0] is not None]
+    if not rows:
+        return
+
+    n_rows = len(rows)
+    cols = max(len(s) for s, _, _ in rows)
+    fig, ax = plt.subplots(n_rows, cols, figsize=(3.0 * cols, 3.25 * n_rows))
+    ax = np.atleast_2d(ax)
+    if cols == 1:
+        ax = ax.reshape(n_rows, 1)
+
+    # Snapshots stored as RGB (everything else is BGR and needs flipping for matplotlib)
+    rgb_stages = {"original", "find_rectangles"}
+
+    for row, (snaps, label, count) in enumerate(rows):
         for j in range(cols):
             a = ax[row, j]
             if j < len(snaps):
                 name, img, _ = snaps[j]
+                if img.ndim == 3 and name not in rgb_stages:
+                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
                 a.imshow(img, cmap=None if img.ndim == 3 else "gray")
                 a.set_title(name, fontsize=10)
             else:
                 a.axis("off")
             a.set_xticks([]); a.set_yticks([])
-        ax[row, 0].set_ylabel(f"{label}\ncount = {count}", fontsize=11)
-    fig.suptitle("Pipeline manipulations - top: Bing reference, bottom: Landsat")
+        ylabel = f"{label}\ncount = {count}" if count is not None else label
+        ax[row, 0].set_ylabel(ylabel, fontsize=11)
+    fig.suptitle("Pipeline manipulations")
     fig.tight_layout()
     _maybe_save(fig, save_path)
     plt.show()
 
 
-def show_contours_side_by_side(ctx_b, ctx_l, save_path=None):
-    fig, ax = plt.subplots(1, 2, figsize=(14, 6))
-    ax[0].imshow(cv2.cvtColor(ctx_b["rect_overlay"], cv2.COLOR_BGR2RGB))
-    ax[0].set_title(f"Bing - detected rectangles: {ctx_b['count']}")
-    ax[1].imshow(cv2.cvtColor(ctx_l["rect_overlay"], cv2.COLOR_BGR2RGB))
-    ax[1].set_title(f"Landsat - detected rectangles: {ctx_l['count']}")
-    for a in ax:
+def show_contours_side_by_side(ctx_a=None, ctx_b=None,
+                               label_a="Bing", label_b="Landsat",
+                               save_path=None):
+    """Show detected rectangles side-by-side. Pass either ctx as None to skip that side."""
+    panels = [(ctx, label) for ctx, label in
+              [(ctx_a, label_a), (ctx_b, label_b)] if ctx is not None]
+    if not panels:
+        return
+    n = len(panels)
+    fig, ax = plt.subplots(1, n, figsize=(7 * n, 6))
+    if n == 1:
+        ax = [ax]
+    for a, (ctx, label) in zip(ax, panels):
+        a.imshow(cv2.cvtColor(ctx["rect_overlay"], cv2.COLOR_BGR2RGB))
+        a.set_title(f"{label} - detected rectangles: {ctx['count']}")
         a.set_xticks([]); a.set_yticks([])
     fig.suptitle("Vectorized contours (approxPolyDP, 4 vertices) - building candidates")
     fig.tight_layout()

@@ -162,6 +162,33 @@ def s_sepia(img, p, ctx):
     return np.clip(out, 0, 255).astype(np.uint8), ctx
 
 
+def s_warm_cool_mask(img, p, ctx):
+    """Separate warm vs cool pixels via the LAB b-channel.
+
+    `b` in LAB is the blue↔yellow axis: pixels with b<128 are cool/bluish,
+    b>=128 are warm/yellowish. Useful for distinguishing e.g. green roofs
+    (cool) from grass/trees (warm) which collapse together in RGB.
+
+    Params:
+      keep      : 'cool' (default) or 'warm'  — which side to keep
+      threshold : int 0..255 (default 128)    — split point on the b channel
+      mode      : 'masked' (default) returns the color image with rejected
+                  pixels set to black; 'mask' returns a binary 0/255 image.
+    """
+    if img.ndim != 3:
+        return img, ctx
+    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    b = lab[..., 2]
+    thr = p.get("threshold", 128)
+    keep_cool = p.get("keep", "cool") == "cool"
+    mask = (b < thr) if keep_cool else (b >= thr)
+    if p.get("mode", "masked") == "mask":
+        return (mask.astype(np.uint8) * 255), ctx
+    out = img.copy()
+    out[~mask] = 0
+    return out, ctx
+
+
 # Public registry — merge into the HW1 STAGES dict
 M2_STAGES = {
     # filters (Lesson 3)
@@ -181,5 +208,6 @@ M2_STAGES = {
     'bbhe':           s_bbhe,
     'dsihe':          s_dsihe,
     # extras
-    'sepia':          s_sepia,
+    'sepia':            s_sepia,
+    'warm_cool_mask':   s_warm_cool_mask,
 }

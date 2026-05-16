@@ -72,13 +72,25 @@ def s_morphology(img, p, ctx):
 
 
 def s_find_rectangles(img, p, ctx):
-    """Lesson 2 / image_recognition.py: arcLength + approxPolyDP, count N-gons."""
+    """Lesson 2 / image_recognition.py: arcLength + approxPolyDP, count N-gons.
+
+    Params:
+      approx_eps     — fraction of perimeter used as approxPolyDP tolerance
+      min_vertices   — minimum vertex count to accept (default 4)
+      max_vertices   — maximum vertex count to accept (default 4)
+      min_area       — minimum contour area (default 0)
+      max_area       — maximum contour area (default 1e12)
+      only_convex    — if True, reject contours whose vertices form a
+                       concave polygon (e.g. arrow / Pac-Man / pinched shapes).
+                       Default False.
+    """
     cnts, _ = cv2.findContours(img.copy(), cv2.RETR_EXTERNAL,
                                cv2.CHAIN_APPROX_SIMPLE)
     overlay = ctx["original_bgr"].copy()
     eps = p.get("approx_eps", 0.02)
     min_v, max_v = p.get("min_vertices", 4), p.get("max_vertices", 4)
     min_a, max_a = p.get("min_area", 0), p.get("max_area", 1e12)
+    only_convex = p.get("only_convex", False)
     matches = []
     for c in cnts:
         a = cv2.contourArea(c)
@@ -86,9 +98,12 @@ def s_find_rectangles(img, p, ctx):
             continue
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, eps * peri, True)
-        if min_v <= len(approx) <= max_v:
-            cv2.drawContours(overlay, [approx], -1, (0, 255, 0), 2)
-            matches.append(approx)
+        if not (min_v <= len(approx) <= max_v):
+            continue
+        if only_convex and not cv2.isContourConvex(approx):
+            continue
+        cv2.drawContours(overlay, [approx], -1, (0, 255, 0), 2)
+        matches.append(approx)
     ctx = {**ctx, "count": len(matches), "matches": matches,
            "rect_overlay": overlay}
     return cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB), ctx

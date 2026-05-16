@@ -18,7 +18,12 @@ import cv2
 STAGES = {}
 
 
-def run_pipeline(img_bgr, params):
+def run_pipeline(img_bgr, params, seed=None):
+    """Run a parameterised stage list. Pass `seed=<int>` to reset OpenCV's RNG
+    for reproducible kmeans (or other RNG-using stages); leave it `None` to
+    keep the original nondeterministic behaviour."""
+    if seed is not None:
+        cv2.setRNGSeed(seed)
     ctx = {"original_bgr": img_bgr.copy(), "count": 0,
            "matches": [], "rect_overlay": img_bgr.copy()}
     snapshots = [("original", cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB), {})]

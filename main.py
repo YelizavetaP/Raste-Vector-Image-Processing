@@ -83,32 +83,35 @@ PARAMS_LANDSAT_HW1 = {
 # --------------------------------------------------------------------------- #
 PARAMS_BING_HW2 = {
     "stages": [
-        ("kmeans",          {"K": 3}),
-        ("bilateral",       {"d": 9, "sigma_color": 75, "sigma_space": 75}),
+        ('warm_cool_mask', {'threshold': 140}),
+        ("bilateral",       {'d': 9, 'sigma_color': 75, 'sigma_space': 75}),
         ("to_gray",         {}),
         ("equalize",        {}),
         ("gaussian_blur",   {"ksize": 15}),
-        ("canny",           {"low": 50, "high": 160}),
+        ("canny",           {"low": 50, "high": 180}),
         ("morphology",      {"op": "close", "shape": "rect", "ksize": 8, "iters": 2}),
         ("negative",        {}),
         ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 3000,
-                             "min_vertices": 4, "max_vertices": 4}),
+                             "min_vertices": 4, "max_vertices": 6, "only_convex": True}),
     ],
 }
 
 PARAMS_LANDSAT_HW2 = {
-    "stages": [
-        ("kmeans",          {"K": 9}),
-        ("to_gray",         {}),
-        ("pow_transform",   {"gamma": 0.7}),
-        ("hist_stretch",    {"low_pct": 2, "high_pct": 98}),
-        ("median_blur",     {"ksize": 3}),
-        ("canny",           {"low": 150, "high": 200}),
-        ("morphology",      {"op": "close", "shape": "rect", "ksize": 8, "iters": 2}),
-        ("negative",        {}),
-        ("find_rectangles", {"approx_eps": 0.08, "min_area": 400, "max_area": 3000,
-                             "min_vertices": 4, "max_vertices": 4}),
-    ],
+      "stages": [
+          # 1. quality enhancement — restore edges + boost contrast
+          ('pow_transform',  {'gamma':1.5}),
+          ("hist_stretch",    {"low_pct": 5, "high_pct": 95}),   
+          ('pil_filter',      {'mode': 'EDGE_ENHANCE'}),
+          ('kmeans',          {'K': 4}),
+          ("to_gray",         {}),
+          ("equalize",        {}),                       
+          # ("pil_sharpen",   {"factor": 2.5}),          # alternative to manual `sharpen`
+          ("canny",           {"low": 80, "high": 150}), 
+          ("morphology",      {"op": "close",  "shape": "rect", "ksize": 9, "iters": 3}),
+          ("negative",        {}),
+          ("find_rectangles", {"approx_eps": 0.08, "min_area": 700, "max_area": 5000,
+                               "min_vertices": 4, "max_vertices": 20, "only_convex": False}),
+      ],
 }
 
 
@@ -122,14 +125,14 @@ def main():
     if landsat is None: raise FileNotFoundError(LANDSAT_PATH)
 
     # # ===== switch task here =====
-    # params_bing    = PARAMS_BING_HW1     # PARAMS_BING_HW2 to run HW2
-    # params_landsat = PARAMS_LANDSAT_HW1  # PARAMS_LANDSAT_HW2 to run HW2
-    # save_dir       = SAVE_DIR_HW1        # SAVE_DIR_HW2 to run HW2
+    params_bing    = PARAMS_BING_HW1     # PARAMS_BING_HW2 to run HW2
+    params_landsat = PARAMS_LANDSAT_HW1  # PARAMS_LANDSAT_HW2 to run HW2
+    save_dir       = SAVE_DIR_HW1        # SAVE_DIR_HW2 to run HW2
 
-    params_bing    = PARAMS_BING_HW2     
-    params_landsat = PARAMS_LANDSAT_HW2  
-    save_dir       = SAVE_DIR_HW2        # SAVE_DIR_HW2 to run HW2
-    # ============================
+    # params_bing    = PARAMS_BING_HW2     
+    # params_landsat = PARAMS_LANDSAT_HW2  
+    # save_dir       = SAVE_DIR_HW2        # SAVE_DIR_HW2 to run HW2
+    # # ============================
 
     # accept str or Path; relative paths resolve against the script's own dir
     save_dir = Path(save_dir) if save_dir else None
