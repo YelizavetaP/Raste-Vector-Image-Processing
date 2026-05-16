@@ -126,6 +126,44 @@ def show_pipeline_grid(snaps_top=None, snaps_bot=None, count_top=None, count_bot
     plt.show()
 
 
+def show_contours_overlay(ctx_a, ctx_b,
+                          label_a='HW1', label_b='HW2',
+                          color_a=(0, 255, 0), color_b=(0, 0, 255),
+                          ax=None, title=None, save_path=None):
+    """Draw both contour sets on the same image in different colors.
+
+    Colors are BGR. Defaults: ctx_a = green, ctx_b = red.
+    Pass `ax` to draw into an existing axes (the caller owns the figure);
+    otherwise creates its own figure and optionally saves to `save_path`.
+    """
+    from matplotlib.lines import Line2D
+
+    own_fig = ax is None
+    if own_fig:
+        fig, ax = plt.subplots(figsize=(10, 8))
+
+    img = ctx_a['original_bgr'].copy()
+    cv2.drawContours(img, ctx_a['matches'], -1, color_a, 2)
+    cv2.drawContours(img, ctx_b['matches'], -1, color_b, 2)
+    ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+    ax.set_xticks([]); ax.set_yticks([])
+    if title:
+        ax.set_title(title)
+
+    handles = [
+        Line2D([0], [0], color=np.array(color_a[::-1]) / 255, lw=2,
+               label=f"{label_a} (n={ctx_a['count']})"),
+        Line2D([0], [0], color=np.array(color_b[::-1]) / 255, lw=2,
+               label=f"{label_b} (n={ctx_b['count']})"),
+    ]
+    ax.legend(handles=handles, loc='upper right')
+
+    if own_fig:
+        fig.tight_layout()
+        _maybe_save(fig, save_path)
+        plt.show()
+
+
 def show_contours_side_by_side(ctx_a=None, ctx_b=None,
                                label_a="Bing", label_b="Landsat",
                                save_path=None):
